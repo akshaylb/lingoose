@@ -127,12 +127,17 @@ func (r *RAG) chunkDocuments(documents ...document.Document) []document.Document
 		}
 
 	}
-	print(len(newDocs))
 	return newDocs
 }
 
 func (r *RAG) AddDocuments(ctx context.Context, documents ...document.Document) error {
-	chunkedDocuments := r.chunkDocuments(documents...)
+	chunkedDocuments := textsplitter.NewRecursiveCharacterTextSplitter(
+		int(r.chunkSize),
+		int(r.chunkOverlap),
+	).SplitDocuments(documents)
+
+	//chunkedDocuments =r.chunkDocuments(documents...)
+
 	return r.index.LoadFromDocuments(ctx, chunkedDocuments)
 }
 
