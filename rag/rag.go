@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 
+	"encoding/json"
+
 	"github.com/henomis/lingoose/document"
 	"github.com/henomis/lingoose/index"
 	"github.com/henomis/lingoose/index/option"
@@ -16,7 +18,7 @@ import (
 const (
 	defaultChunkSize    = 1000
 	defaultChunkOverlap = 0
-	defaultTopK         = 1
+	defaultTopK         = 5
 )
 
 type LLM interface {
@@ -96,8 +98,42 @@ func (r *RAG) AddSources(ctx context.Context, sources ...string) error {
 	return nil
 }
 
+func (r *RAG) chunkDocuments(documents ...document.Document) []document.Document {
+	var newDocs []document.Document
+	//chunkSize := 2000
+
+	for _, doc := range documents {
+		var parsed map[string]interface{}
+
+		metadata := doc.Metadata
+		content := doc.Content
+
+		err := json.Unmarshal([]byte(content), &parsed)
+		if err != nil {
+			return nil
+		}
+
+		for k, part := range parsed {
+			partString, err := json.Marshal(part)
+			if err != nil {
+				return nil
+			}
+			var newDoc = document.Document{}
+			m, err := json.Marshal(map[string]string{k: string(partString)})
+
+			newDoc.Content = string(m)
+			newDoc.Metadata = metadata
+			newDocs = append(newDocs, newDoc)
+		}
+
+	}
+	print(len(newDocs))
+	return newDocs
+}
+
 func (r *RAG) AddDocuments(ctx context.Context, documents ...document.Document) error {
-	return r.index.LoadFromDocuments(ctx, documents)
+	chunkedDocuments := r.chunkDocuments(documents...)
+	return r.index.LoadFromDocuments(ctx, chunkedDocuments)
 }
 
 func (r *RAG) Retrieve(ctx context.Context, query string) ([]string, error) {
