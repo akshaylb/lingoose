@@ -244,7 +244,7 @@ func (o *Anthropic) generate(ctx context.Context, t *thread.Thread, chatRequest 
 		return fmt.Errorf("%w: %w", ErrAnthropicChat, err)
 	}
 	if resp.RawBody != nil && len(resp.RawBody) > 0 {
-		log.Warn().Msgf("Raw anthropic output: %s\n", string(resp.RawBody))
+		log.Warn().Msgf("Raw anthropic output: %s\n with status code:%d", string(resp.RawBody), resp.HTTPStatusCode)
 	}
 	if resp.HTTPStatusCode == http.StatusUnauthorized {
 		return ErrUnauthorized
