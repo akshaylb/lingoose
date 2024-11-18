@@ -29,6 +29,7 @@ const (
 	GPT40613              Model = openai.GPT40613
 	GPT40314              Model = openai.GPT40314
 	GPT4o                 Model = openai.GPT4o
+	GPT4oMini             Model = openai.GPT4oMini
 	GPT4o20240513         Model = openai.GPT4o20240513
 	GPT4Turbo             Model = openai.GPT4Turbo
 	GPT4Turbo20240409     Model = openai.GPT4Turbo20240409
