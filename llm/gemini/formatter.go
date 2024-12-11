@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -14,7 +15,7 @@ func threadToPartMessage(t *thread.Thread) []genai.Part {
 	//msgToModel = system prompts + user utterance
 	for _, m := range t.Messages {
 		switch m.Role {
-		case thread.RoleUser, thread.RoleSystem:
+		case thread.RoleUser, thread.RoleSystem, thread.RoleAssistant:
 			for _, content := range m.Contents {
 				contentData, ok := content.Data.(string)
 				if !ok {
@@ -22,8 +23,8 @@ func threadToPartMessage(t *thread.Thread) []genai.Part {
 				}
 				chatMessages = append(chatMessages, genai.Text(contentData))
 			}
-		case thread.RoleAssistant:
-			continue
+		//case thread.RoleAssistant:
+		//	continue
 		case thread.RoleTool:
 			if data, isTollResponseData := m.Contents[0].Data.(thread.ToolResponseData); isTollResponseData && !m.Contents[0].Processed {
 				var funcResponses genai.FunctionResponse
@@ -38,75 +39,53 @@ func threadToPartMessage(t *thread.Thread) []genai.Part {
 	return chatMessages
 }
 
-func threadToChatPartMessage(t *thread.Thread) ([]genai.Part, error) {
+func (g *Gemini) threadToChatPartMessage(t *thread.Thread) ([]genai.Part, error) {
 	var (
 		chatMessages []genai.Part
-		//chatHistory  []*genai.Content
+		chatHistory  []*genai.Content
 	)
 
 	for _, m := range t.Messages {
+		if m == t.LastMessage() && (m.Role == thread.RoleUser) {
+			break
+		}
+
 		switch m.Role {
-		case thread.RoleUser, thread.RoleSystem:
-			for _, content := range m.Contents {
-				contentData, ok := content.Data.(string)
-				if !ok || content.Processed {
-					continue
-				}
-				chatMessages = append(chatMessages, genai.Text(contentData))
-				content.Processed = true
+		case thread.RoleSystem:
+			g.genModel.SystemInstruction = &genai.Content{
+				Role:  "system_instructions",
+				Parts: []genai.Part{genai.Text(m.Contents[0].AsString())},
 			}
 
+		case thread.RoleUser:
+			role := threadRoleToGeminiRole[thread.RoleUser]
+			chatHistory = append(chatHistory, formChatHistory(role, m)...)
+
 		case thread.RoleAssistant:
-			continue
+			assistantRole := threadRoleToGeminiRole[thread.RoleAssistant]
+			chatHistory = append(chatHistory, formChatHistory(assistantRole, m)...)
+
 		case thread.RoleTool:
-			if data, isTollResponseData := m.Contents[0].Data.(thread.ToolResponseData); isTollResponseData && !m.Contents[0].Processed {
-				var funcResponses genai.FunctionResponse
-				funcResponses.Name = data.Name
-				funcResponses.Response = map[string]any{
-					"result": data.Result,
-				}
-				chatMessages = append(chatMessages, funcResponses)
-				m.Contents[0].Processed = true
-			}
+			continue
 		}
 	}
 
-	//msgToModel = system prompts + user utterance
-	//for _, m := range t.Messages {
-	//
-	//	//process last msg as chat message
-	//	if m == t.LastMessage() && (m.Role == thread.RoleUser || m.Role == thread.RoleSystem) {
-	//		break
-	//	}
-	//
-	//	switch m.Role {
-	//	case thread.RoleUser, thread.RoleSystem:
-	//		role := threadRoleToGeminiRole[thread.RoleUser]
-	//		formChatHistory(role, m, chatHistory)
-	//
-	//	case thread.RoleAssistant:
-	//		assistantRole := threadRoleToGeminiRole[thread.RoleAssistant]
-	//		formChatHistory(assistantRole, m, chatHistory)
-	//
-	//	case thread.RoleTool:
-	//		continue
-	//	}
-	//}
-
-	//userMsg := LastUserMessage(t)
-	//if userMsg != nil {
-	//	for _, content := range userMsg.Contents {
-	//		contentData, ok := content.Data.(string)
-	//		if !ok {
-	//			continue
-	//		}
-	//		chatMessages = append(chatMessages, genai.Text(contentData))
-	//	}
-	//}
-
-	if len(chatMessages) == 0 {
-		return nil, fmt.Errorf("%w", ErrGeminiNoChat)
+	for _, content := range t.LastMessage().Contents {
+		switch v := content.Data.(type) {
+		case thread.ToolResponseData:
+			var response map[string]any
+			_ = json.Unmarshal([]byte(v.Result), &response)
+			chatMessages = append(chatMessages, genai.FunctionResponse{
+				Name:     v.Name,
+				Response: response,
+			})
+		default:
+			chatMessages = append(chatMessages, genai.Text(content.AsString()))
+		}
 	}
+
+	g.session = g.genModel.StartChat()
+	g.session.History = chatHistory
 	return chatMessages, nil
 }
 
@@ -139,8 +118,10 @@ func functionToolCallsToToolCallMessage(toolCalls []genai.FunctionCall) *thread.
 
 	var toolCallData []thread.ToolCallData
 	for _, toolCall := range toolCalls {
+		args, _ := json.Marshal(toolCall.Args)
 		toolCallData = append(toolCallData, thread.ToolCallData{
-			Name: toolCall.Name,
+			Name:      toolCall.Name,
+			Arguments: string(args),
 		})
 	}
 
@@ -162,18 +143,28 @@ func toolCallResultToThreadMessage(fnCall genai.FunctionCall, result string) *th
 	)
 }
 
-func formChatHistory(role string, m *thread.Message, ch []*genai.Content) {
+func formChatHistory(role string, m *thread.Message) (ch []*genai.Content) {
 	chatContent := &genai.Content{
 		Role: role,
 	}
 	for _, content := range m.Contents {
-		contentData, ok := content.Data.(string)
-		if !ok {
-			continue
+		switch content.Data.(type) {
+		case []thread.ToolCallData:
+			for _, tcd := range content.Data.([]thread.ToolCallData) {
+				var args map[string]any
+				_ = json.Unmarshal([]byte(tcd.Arguments), &args)
+				chatContent.Parts = append(chatContent.Parts, genai.FunctionCall{
+					Name: tcd.Name,
+					Args: args,
+				})
+			}
+		default:
+			chatContent.Parts = append(chatContent.Parts, genai.Text(content.AsString()))
 		}
-		chatContent.Parts = append(chatContent.Parts, genai.Text(contentData))
+
 	}
 	ch = append(ch, chatContent)
+	return
 }
 
 // LastUserMessage returns last user or assistant message in the thread

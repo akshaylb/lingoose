@@ -13,7 +13,6 @@ import (
 )
 
 func (g *Gemini) streamChat(ctx context.Context, t *thread.Thread, parts []genai.Part) error {
-
 	iter := g.session.SendMessageStream(ctx, parts...)
 
 	var (

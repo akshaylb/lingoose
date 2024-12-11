@@ -78,7 +78,9 @@ func (g *Gemini) WithCache(cache *cache.Cache) *Gemini {
 }
 
 func (g *Gemini) WithChatMode() *Gemini {
-	g.session = g.genModel.StartChat()
+	if g.session == nil {
+		g.session = g.genModel.StartChat()
+	}
 	return g
 }
 
@@ -213,6 +215,14 @@ func (g *Gemini) Generate(ctx context.Context, t *thread.Thread) error {
 }
 
 func (g *Gemini) stream(ctx context.Context, t *thread.Thread, parts []genai.Part) error {
+	if len(parts) > 1 {
+		systemPrompt := parts[:1]
+		parts = parts[1:]
+		g.genModel.SystemInstruction = &genai.Content{
+			Role:  "system",
+			Parts: systemPrompt,
+		}
+	}
 	iter := g.genModel.GenerateContentStream(ctx, parts...)
 
 	var (
@@ -302,7 +312,7 @@ func (g *Gemini) buildRequest(t *thread.Thread) []genai.Part {
 }
 
 func (g *Gemini) buildChatRequest(t *thread.Thread) ([]genai.Part, error) {
-	return threadToChatPartMessage(t)
+	return g.threadToChatPartMessage(t)
 }
 
 func (g *Gemini) callFuncTools(toolCalls []genai.FunctionCall) []*thread.Message {
