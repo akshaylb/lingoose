@@ -67,8 +67,15 @@ func (g *Gemini) ClearTools() {
 }
 
 func (g *Gemini) WithTools(tools []*genai.Tool) *Gemini {
-	// TODO: Handle genai.Schema from caller function
 	g.genModel.Tools = tools
+	return g
+}
+
+func (g *Gemini) WithToolChoice(toolName string) *Gemini {
+	g.genModel.ToolConfig = &genai.ToolConfig{&genai.FunctionCallingConfig{
+		Mode:                 genai.FunctionCallingAny,
+		AllowedFunctionNames: []string{toolName},
+	}}
 	return g
 }
 
@@ -238,7 +245,7 @@ func (g *Gemini) stream(ctx context.Context, t *thread.Thread, parts []genai.Par
 			g.streamCallbackFn(EOS)
 			if content.Len() > 0 {
 				messages = append(messages, thread.NewAssistantMessage().AddContent(
-					thread.NewTextContent(content.String()),
+					thread.NewTextContent(strings.TrimSpace(content.String())),
 				))
 			}
 

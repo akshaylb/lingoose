@@ -45,17 +45,16 @@ func (g *Gemini) threadToChatPartMessage(t *thread.Thread) ([]genai.Part, error)
 		chatHistory  []*genai.Content
 	)
 
-	for _, m := range t.Messages {
-		if m == t.LastMessage() && (m.Role == thread.RoleUser) {
-			break
-		}
-
+	for _, m := range t.Messages[:len(t.Messages)-1] {
 		switch m.Role {
 		case thread.RoleSystem:
 			g.genModel.SystemInstruction = &genai.Content{
 				Role:  "system_instructions",
 				Parts: []genai.Part{genai.Text(m.Contents[0].AsString())},
 			}
+			//fmt.Println("----System-----")
+			//fmt.Println(m.Contents[0].AsString()[:100])
+			//fmt.Println("----End----")
 
 		case thread.RoleUser:
 			role := threadRoleToGeminiRole[thread.RoleUser]
@@ -66,7 +65,8 @@ func (g *Gemini) threadToChatPartMessage(t *thread.Thread) ([]genai.Part, error)
 			chatHistory = append(chatHistory, formChatHistory(assistantRole, m)...)
 
 		case thread.RoleTool:
-			continue
+			toolRole := threadRoleToGeminiRole[thread.RoleTool]
+			chatHistory = append(chatHistory, formChatHistory(toolRole, m)...)
 		}
 	}
 
@@ -84,6 +84,13 @@ func (g *Gemini) threadToChatPartMessage(t *thread.Thread) ([]genai.Part, error)
 		}
 	}
 
+	//fmt.Println("----History----")
+	//for _, history := range chatHistory {
+	//	fmt.Println(history.Role, history.Parts)
+	//}
+	//fmt.Println("----Messages----")
+	//fmt.Println(chatMessages)
+	//fmt.Println("----End----")
 	g.session = g.genModel.StartChat()
 	g.session.History = chatHistory
 	return chatMessages, nil
@@ -148,9 +155,9 @@ func formChatHistory(role string, m *thread.Message) (ch []*genai.Content) {
 		Role: role,
 	}
 	for _, content := range m.Contents {
-		switch content.Data.(type) {
+		switch v := content.Data.(type) {
 		case []thread.ToolCallData:
-			for _, tcd := range content.Data.([]thread.ToolCallData) {
+			for _, tcd := range v {
 				var args map[string]any
 				_ = json.Unmarshal([]byte(tcd.Arguments), &args)
 				chatContent.Parts = append(chatContent.Parts, genai.FunctionCall{
@@ -158,6 +165,13 @@ func formChatHistory(role string, m *thread.Message) (ch []*genai.Content) {
 					Args: args,
 				})
 			}
+		case thread.ToolResponseData:
+			var toolResponse map[string]any
+			_ = json.Unmarshal([]byte(v.Result), &toolResponse)
+			chatContent.Parts = append(chatContent.Parts, genai.FunctionResponse{
+				Name:     v.Name,
+				Response: toolResponse,
+			})
 		default:
 			chatContent.Parts = append(chatContent.Parts, genai.Text(content.AsString()))
 		}
