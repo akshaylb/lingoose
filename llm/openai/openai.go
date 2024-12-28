@@ -43,6 +43,8 @@ type OpenAI struct {
 	toolChoice       *string
 	cache            *cache.Cache
 	Name             string
+	store            bool
+	metadata         map[string]string
 }
 
 // WithModel sets the model to use for the OpenAI instance.
@@ -104,6 +106,16 @@ func (o *OpenAI) WithStream(enable bool, callbackFn StreamCallback) *OpenAI {
 
 func (o *OpenAI) WithCache(cache *cache.Cache) *OpenAI {
 	o.cache = cache
+	return o
+}
+
+func (o *OpenAI) WithStore(store bool) *OpenAI {
+	o.store = store
+	return o
+}
+
+func (o *OpenAI) WithMetadata(metadata map[string]string) *OpenAI {
+	o.metadata = metadata
 	return o
 }
 
@@ -412,14 +424,16 @@ func (o *OpenAI) BuildChatCompletionRequest(t *thread.Thread) openai.ChatComplet
 	}
 
 	return openai.ChatCompletionRequest{
-		Model:                string(o.model),
-		Messages:             threadToChatCompletionMessages(t),
-		MaxCompletionsTokens: o.maxTokens,
-		Temperature:          o.temperature,
-		N:                    DefaultOpenAINumResults,
-		TopP:                 o.topP,
-		Stop:                 o.stop,
-		ResponseFormat:       responseFormat,
+		Model:               string(o.model),
+		Messages:            threadToChatCompletionMessages(t),
+		MaxCompletionTokens: o.maxTokens,
+		Temperature:         o.temperature,
+		N:                   DefaultOpenAINumResults,
+		TopP:                o.topP,
+		Stop:                o.stop,
+		ResponseFormat:      responseFormat,
+		Store:               o.store,
+		Metadata:            o.metadata,
 	}
 }
 
