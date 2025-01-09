@@ -3,12 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-
-	"cloud.google.com/go/vertexai/genai"
 	"github.com/henomis/lingoose/llm/gemini"
 	"github.com/henomis/lingoose/thread"
-	"google.golang.org/api/option"
+	"google.golang.org/genai"
+	"os"
 )
 
 var (
@@ -23,11 +21,30 @@ func init() {
 
 func main() {
 	ctx := context.Background()
-	client, err := genai.NewClient(ctx, PROJECT, REGION, option.WithCredentialsFile(GCP_KEY_PATH))
-	if err != nil {
-		return
-	}
-	geminiLLM := gemini.New(ctx, client, gemini.Gemini1Pro001).WithStream(true, func(string) {})
+	var err error
+	//client, err := genai.NewClient(ctx, PROJECT, REGION, option.WithCredentialsFile(GCP_KEY_PATH))
+	//if err != nil {
+	//	return
+	//}
+
+	//CredJson, err := ioutil.ReadFile(GCP_KEY_PATH)
+	//if err != nil {
+	//	fmt.Println(err)
+	//	return
+	//}
+	//cred, err := google.CredentialsFromJSON(ctx, CredJson)
+	//if err != nil {
+	//	fmt.Println(err)
+	//	return
+	//}
+
+	geminiLLM := gemini.New(ctx, gemini.GenerateOpts{
+		Project:  PROJECT,
+		Location: REGION,
+		Model:    gemini.GeminiFlash20Exp,
+		Cred:     nil,
+		Config:   &genai.GenerateContentConfig{},
+	})
 
 	t := thread.New().AddMessage(
 		thread.NewUserMessage().AddContent(
@@ -51,9 +68,9 @@ func main() {
 	fmt.Println("PREDICTION THREAD ::")
 	fmt.Println(t.String())
 
-	t.ClearMessages()
+	//t.ClearMessages()
 	t.AddMessage(thread.NewUserMessage().AddContent(
-		thread.NewTextContent("now translate to italian as a poem"),
+		thread.NewTextContent("Now translate to italian given to you as a poem. Give me a single poem of your choice"),
 	))
 
 	fmt.Println("INPUT THREAD ::")

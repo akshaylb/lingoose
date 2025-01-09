@@ -3,12 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-
-	"cloud.google.com/go/vertexai/genai"
 	"github.com/henomis/lingoose/llm/gemini"
 	"github.com/henomis/lingoose/thread"
-	"google.golang.org/api/option"
+	"google.golang.org/genai"
+	"os"
 )
 
 var (
@@ -67,17 +65,18 @@ func streamCallBack(s string) {
 func main() {
 	ctx := context.Background()
 
-	client, err := genai.NewClient(ctx, PROJECT, REGION, option.WithCredentialsFile(GCP_KEY_PATH))
-	if err != nil {
-		return
-	}
-	geminiLLM := gemini.New(ctx, client, gemini.Gemini1Pro001).WithStream(true,
-		streamCallBack).WithTools(buildFuncTool())
+	geminiLLM := gemini.New(ctx, gemini.GenerateOpts{
+		Project:  PROJECT,
+		Location: REGION,
+		Model:    gemini.GeminiFlash20Exp,
+		Cred:     nil,
+		Config:   &genai.GenerateContentConfig{},
+	}).WithTools(buildFuncTool())
 
-	err = geminiLLM.BindFunction(
+	err := geminiLLM.BindFunction(
 		getAnswer,
 		"getAnswer",
-		"use this function when pirate finishes his answer")
+		"Always use this function when pirate finishes his answer")
 
 	if err != nil {
 		panic(err)

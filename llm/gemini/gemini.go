@@ -5,12 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
-
-	"cloud.google.com/go/vertexai/genai"
 	"github.com/henomis/lingoose/llm/cache"
 	"github.com/henomis/lingoose/thread"
-	"google.golang.org/api/iterator"
+	"golang.org/x/oauth2/google"
+	"google.golang.org/genai"
+	"strings"
 )
 
 const (
@@ -27,9 +26,8 @@ var threadRoleToGeminiRole = map[thread.Role]string{
 type Gemini struct {
 	ctx              context.Context
 	client           *genai.Client
+	generateConfig   *genai.GenerateContentConfig
 	model            Model
-	genModel         *genai.GenerativeModel
-	session          *genai.ChatSession
 	temperature      float32
 	maxTokens        int
 	stop             []string
@@ -37,13 +35,13 @@ type Gemini struct {
 	streamCallbackFn StreamCallback
 	tools            []*genai.Tool
 	cache            *cache.Cache
-	currentParts     []genai.Part
+	TotalTokens      int64
 }
 
 func DefaultSafetySettings() []*genai.SafetySetting {
 	return []*genai.SafetySetting{{
 		Category:  genai.HarmCategoryDangerousContent,
-		Threshold: genai.HarmBlockNone,
+		Threshold: genai.HarmBlockThresholdBlockMediumAndAbove,
 	}}
 }
 
@@ -63,17 +61,17 @@ func (g *Gemini) WithStream(enable bool, callbackFn StreamCallback) *Gemini {
 }
 
 func (g *Gemini) ClearTools() {
-	g.genModel.Tools = []*genai.Tool{}
+	g.generateConfig.Tools = []*genai.Tool{}
 }
 
 func (g *Gemini) WithTools(tools []*genai.Tool) *Gemini {
-	g.genModel.Tools = tools
+	g.generateConfig.Tools = tools
 	return g
 }
 
 func (g *Gemini) WithToolChoice(toolName string) *Gemini {
-	g.genModel.ToolConfig = &genai.ToolConfig{&genai.FunctionCallingConfig{
-		Mode:                 genai.FunctionCallingAny,
+	g.generateConfig.ToolConfig = &genai.ToolConfig{&genai.FunctionCallingConfig{
+		Mode:                 genai.FunctionCallingConfigModeAny,
 		AllowedFunctionNames: []string{toolName},
 	}}
 	return g
@@ -84,41 +82,59 @@ func (g *Gemini) WithCache(cache *cache.Cache) *Gemini {
 	return g
 }
 
-func (g *Gemini) WithChatMode() *Gemini {
-	if g.session == nil {
-		g.session = g.genModel.StartChat()
-	}
-	return g
+type GenerateOpts struct {
+	Project  string
+	Location string
+	Model    Model
+	Cred     *google.Credentials
+	Config   *genai.GenerateContentConfig
 }
 
-func New(ctx context.Context, client *genai.Client, model Model) *Gemini {
+func New(ctx context.Context, opts GenerateOpts) *Gemini {
 	gemini := &Gemini{}
 	gemini.ctx = ctx
-	gemini.model = model
-	gemini.client = client
+	gemini.model = opts.Model
 	gemini.functions = make(map[string]Function)
-	gemini.genModel = gemini.client.GenerativeModel(model.String())
+
+	gemini.client, _ = genai.NewClient(ctx, &genai.ClientConfig{
+		Project:     opts.Project,
+		Location:    opts.Location,
+		Backend:     genai.BackendVertexAI,
+		Credentials: opts.Cred,
+	})
+	if opts.Config == nil {
+		opts.Config = &genai.GenerateContentConfig{}
+	}
+
+	gemini.generateConfig = opts.Config
+	if opts.Config.Temperature == nil {
+		opts.Config.Temperature = genai.Ptr(0.5)
+	}
+	if opts.Config.TopK == nil {
+		opts.Config.TopK = genai.Ptr(1.0)
+	}
+	if opts.Config.TopP == nil {
+		opts.Config.TopP = genai.Ptr(0.5)
+	}
+
 	return gemini
 }
 
+func (g *Gemini) GetGenerateContentConfig() *genai.GenerateContentConfig {
+	return g.generateConfig
+}
+
 func (g *Gemini) WithSafety(s []*genai.SafetySetting) *Gemini {
-	g.genModel.SafetySettings = s
+	g.generateConfig.SafetySettings = s
 	return g
 }
 
-func (g *Gemini) GetChatHistory() []*genai.Content {
-	if g.session != nil {
-		return g.session.History
-	}
-	return nil
-}
-
 func (g *Gemini) GetTools() []*genai.Tool {
-	return g.genModel.Tools
+	return g.generateConfig.Tools
 }
 
-func (g *Gemini) GetTokenCount() (*genai.CountTokensResponse, error) {
-	return g.genModel.CountTokens(g.ctx, g.currentParts...)
+func (g *Gemini) GetTokenCount() int64 {
+	return g.TotalTokens
 }
 
 func (g *Gemini) getCache(ctx context.Context, t *thread.Thread) (*cache.Result, error) {
@@ -176,35 +192,19 @@ func (g *Gemini) Generate(ctx context.Context, t *thread.Thread) error {
 		}
 	}
 	var (
-		errChat error
-		errGen  error
-		parts   []genai.Part
+		errGen       error
+		partContents []*genai.Content
 	)
 	defer func() {
-		if len(parts) != 0 {
-			g.currentParts = parts
-		}
+		g.TotalTokens = 0
 	}()
 
-	if g.session != nil {
-		parts, errChat = g.buildChatRequest(t)
-		if errChat != nil {
-			return err
-		}
+	if g.client != nil {
+		partContents = g.buildRequest(t)
 		if g.streamCallbackFn != nil {
-			errChat = g.streamChat(ctx, t, parts)
+			errGen = g.stream(ctx, t, partContents)
 		} else {
-			errChat = g.generateChat(ctx, t, parts)
-		}
-		if errChat != nil {
-			return errChat
-		}
-	} else {
-		parts = g.buildRequest(t)
-		if g.streamCallbackFn != nil {
-			errGen = g.stream(ctx, t, parts)
-		} else {
-			errGen = g.generate(ctx, t, parts)
+			errGen = g.generate(ctx, t, partContents)
 		}
 		if errGen != nil {
 			return errGen
@@ -221,16 +221,15 @@ func (g *Gemini) Generate(ctx context.Context, t *thread.Thread) error {
 	return nil
 }
 
-func (g *Gemini) stream(ctx context.Context, t *thread.Thread, parts []genai.Part) error {
+func (g *Gemini) stream(ctx context.Context, t *thread.Thread, parts []*genai.Content) error {
 	if len(parts) > 1 {
 		systemPrompt := parts[:1]
 		parts = parts[1:]
-		g.genModel.SystemInstruction = &genai.Content{
-			Role:  "system",
-			Parts: systemPrompt,
-		}
+		g.generateConfig.SystemInstruction = systemPrompt[0]
 	}
-	iter := g.genModel.GenerateContentStream(ctx, parts...)
+
+	//iter := g.genModel.GenerateContentStream(ctx, parts...)
+	iterItems := g.client.Models.GenerateContentStream(ctx, g.model.String(), parts, g.GetGenerateContentConfig())
 
 	var (
 		messages            []*thread.Message
@@ -239,23 +238,7 @@ func (g *Gemini) stream(ctx context.Context, t *thread.Thread, parts []genai.Par
 		content             strings.Builder
 	)
 
-	for {
-		response, err := iter.Next()
-		if errors.Is(err, iterator.Done) {
-			g.streamCallbackFn(EOS)
-			if content.Len() > 0 {
-				messages = append(messages, thread.NewAssistantMessage().AddContent(
-					thread.NewTextContent(strings.TrimSpace(content.String())),
-				))
-			}
-
-			if currentFuncToolCall.Name != "" {
-				messages = append(messages, functionToolCallsToToolCallMessage(allFuncToolCall))
-				messages = append(messages, g.callFuncTools(allFuncToolCall)...)
-			}
-
-			break
-		}
+	for response, err := range iterItems {
 
 		if response == nil || err != nil {
 			return fmt.Errorf("%w", err)
@@ -266,24 +249,42 @@ func (g *Gemini) stream(ctx context.Context, t *thread.Thread, parts []genai.Par
 			return fmt.Errorf("no candidates retured | prompt feedback: %s", string(out))
 		}
 
+		if response.UsageMetadata != nil {
+			g.TotalTokens += response.UsageMetadata.TotalTokenCount
+		}
+
 		//check func tool call
 		part := response.Candidates[0].Content.Parts[0]
-		funCall, ok := part.(genai.FunctionCall)
-		if ok {
-			allFuncToolCall = append(allFuncToolCall, funCall)
-			currentFuncToolCall = funCall
+		if part.FunctionCall != nil {
+			funCall := part.FunctionCall
+			allFuncToolCall = append(allFuncToolCall, *funCall)
+			currentFuncToolCall = *funCall
 		} else {
 			content.WriteString(PartsTostring(response.Candidates[0].Content.Parts))
 			g.streamCallbackFn(PartsTostring(response.Candidates[0].Content.Parts))
 		}
 	}
+
+	//when iterator ends
+	g.streamCallbackFn(EOS)
+	if content.Len() > 0 {
+		messages = append(messages, thread.NewAssistantMessage().AddContent(
+			thread.NewTextContent(strings.TrimSpace(content.String())),
+		))
+	}
+
+	if currentFuncToolCall.Name != "" {
+		messages = append(messages, functionToolCallsToToolCallMessage(allFuncToolCall))
+		messages = append(messages, g.callFuncTools(allFuncToolCall)...)
+	}
+
 	t.AddMessages(messages...)
 	return nil
 }
 
-func (g *Gemini) generate(ctx context.Context, t *thread.Thread, parts []genai.Part) error {
+func (g *Gemini) generate(ctx context.Context, t *thread.Thread, parts []*genai.Content) error {
 
-	response, err := g.genModel.GenerateContent(ctx, parts...)
+	response, err := g.client.Models.GenerateContent(ctx, g.model.String(), parts, g.GetGenerateContentConfig())
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrGeminiChat, err)
 	}
@@ -292,13 +293,16 @@ func (g *Gemini) generate(ctx context.Context, t *thread.Thread, parts []genai.P
 		out, _ := json.Marshal(response.PromptFeedback)
 		return fmt.Errorf("no candidates retured | prompt feedback: %s", string(out))
 	}
+	if response.UsageMetadata != nil {
+		g.TotalTokens += response.UsageMetadata.TotalTokenCount
+	}
 
 	var messages []*thread.Message
 
 	//check func tool call
 	part := response.Candidates[0].Content.Parts[0]
-	funCall, ok := part.(genai.FunctionCall)
-	if ok {
+	if part.FunctionCall != nil {
+		funCall := *part.FunctionCall
 		messages = append(messages, functionToolCallsToToolCallMessage([]genai.FunctionCall{funCall}))
 		messages = append(messages, g.callFuncTools([]genai.FunctionCall{funCall})...)
 	} else {
@@ -308,18 +312,12 @@ func (g *Gemini) generate(ctx context.Context, t *thread.Thread, parts []genai.P
 			),
 		}
 	}
-
 	t.Messages = append(t.Messages, messages...)
-
 	return nil
 }
 
-func (g *Gemini) buildRequest(t *thread.Thread) []genai.Part {
-	return threadToPartMessage(t)
-}
-
-func (g *Gemini) buildChatRequest(t *thread.Thread) ([]genai.Part, error) {
-	return g.threadToChatPartMessage(t)
+func (g *Gemini) buildRequest(t *thread.Thread) []*genai.Content {
+	return g.threadToPartContentMessage(t)
 }
 
 func (g *Gemini) callFuncTools(toolCalls []genai.FunctionCall) []*thread.Message {

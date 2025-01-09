@@ -3,12 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-
-	"cloud.google.com/go/vertexai/genai"
 	"github.com/henomis/lingoose/llm/gemini"
 	"github.com/henomis/lingoose/thread"
-	"google.golang.org/api/option"
+	"google.golang.org/genai"
+	"os"
 )
 
 var (
@@ -105,7 +103,7 @@ func buildFuncTool() []*genai.Tool {
 
 func streamCallBack(s string) {
 	if s == gemini.EOS {
-		fmt.Printf("\n")
+		fmt.Printf("EOS \n")
 		return
 	}
 	fmt.Printf("%s \n", s)
@@ -121,14 +119,14 @@ func PrintHistory(history []*genai.Content) {
 
 func main() {
 	ctx := context.Background()
-	client, err := genai.NewClient(ctx, PROJECT, REGION, option.WithCredentialsFile(GCP_KEY_PATH))
-	if err != nil {
-		return
-	}
-	defer client.Close()
-
-	geminiLLM := gemini.New(ctx, client, gemini.Gemini1Pro001).WithStream(true,
-		streamCallBack).WithChatMode()
+	var err error
+	geminiLLM := gemini.New(ctx, gemini.GenerateOpts{
+		Project:  PROJECT,
+		Location: REGION,
+		Model:    gemini.GeminiFlash20Exp,
+		Cred:     nil,
+		Config:   &genai.GenerateContentConfig{},
+	}).WithStream(true, streamCallBack).WithTools(buildFuncTool())
 
 	err = geminiLLM.BindFunction(
 		getAnswer,
@@ -167,8 +165,8 @@ func main() {
 	fmt.Println("PREDICTION THREAD ::")
 	fmt.Println(t.String())
 	fmt.Println("------------------------------------")
-	fmt.Println("SESSION HISTORY :: ")
-	PrintHistory(geminiLLM.GetChatHistory())
+	//fmt.Println("SESSION HISTORY :: ")
+	//PrintHistory(geminiLLM.GetChatHistory())
 
 	if t.LastMessage().Role == thread.RoleTool {
 		err = geminiLLM.Generate(context.Background(), t)
@@ -201,8 +199,8 @@ func main() {
 	fmt.Println("PREDICTION THREAD ::")
 	fmt.Println(t.String())
 	fmt.Println("------------------------------------")
-	fmt.Println("SESSION HISTORY ::")
-	PrintHistory(geminiLLM.GetChatHistory())
+	//fmt.Println("SESSION HISTORY ::")
+	//PrintHistory(geminiLLM.GetChatHistory())
 
 	t.AddMessage(thread.NewUserMessage().AddContent(
 		thread.NewTextContent("Thank you! Bye!"),
@@ -221,7 +219,7 @@ func main() {
 	fmt.Println("PREDICTION THREAD ::")
 	fmt.Println(t.String())
 	fmt.Println("------------------------------------")
-	fmt.Println("SESSION HISTORY ::")
-	PrintHistory(geminiLLM.GetChatHistory())
+	//fmt.Println("SESSION HISTORY ::")
+	//PrintHistory(geminiLLM.GetChatHistory())
 
 }

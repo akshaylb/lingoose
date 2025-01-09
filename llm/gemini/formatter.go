@@ -3,70 +3,67 @@ package gemini
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
-
-	"cloud.google.com/go/vertexai/genai"
 	"github.com/henomis/lingoose/thread"
+	"google.golang.org/genai"
+	"strings"
 )
 
-func threadToPartMessage(t *thread.Thread) []genai.Part {
-	var chatMessages []genai.Part
+//func threadToPartContentMessage(t *thread.Thread) []*genai.Content {
+//	var chatMessages []*genai.Content
+//
+//	//msgToModel = system prompts + user utterance
+//	for _, m := range t.Messages {
+//		switch m.Role {
+//		case thread.RoleUser, thread.RoleSystem, thread.RoleAssistant:
+//			for _, content := range m.Contents {
+//				contentData, ok := content.Data.(string)
+//				if !ok {
+//					continue
+//				}
+//				chatMessages = append(chatMessages, genai.Text(contentData)...)
+//			}
+//		//case thread.RoleAssistant:
+//		//	continue
+//		case thread.RoleTool:
+//			if data, isTollResponseData := m.Contents[0].Data.(thread.ToolResponseData); isTollResponseData && !m.Contents[0].Processed {
+//				var funcResponses genai.FunctionResponse
+//				funcResponses.Name = data.Name
+//				funcResponses.Response = map[string]any{
+//					"result": data.Result,
+//				}
+//				chatMessages = append(chatMessages, funcResponses)
+//			}
+//		}
+//	}
+//	return chatMessages
+//}
 
-	//msgToModel = system prompts + user utterance
-	for _, m := range t.Messages {
-		switch m.Role {
-		case thread.RoleUser, thread.RoleSystem, thread.RoleAssistant:
-			for _, content := range m.Contents {
-				contentData, ok := content.Data.(string)
-				if !ok {
-					continue
-				}
-				chatMessages = append(chatMessages, genai.Text(contentData))
-			}
-		//case thread.RoleAssistant:
-		//	continue
-		case thread.RoleTool:
-			if data, isTollResponseData := m.Contents[0].Data.(thread.ToolResponseData); isTollResponseData && !m.Contents[0].Processed {
-				var funcResponses genai.FunctionResponse
-				funcResponses.Name = data.Name
-				funcResponses.Response = map[string]any{
-					"result": data.Result,
-				}
-				chatMessages = append(chatMessages, funcResponses)
-			}
-		}
-	}
-	return chatMessages
-}
-
-func (g *Gemini) threadToChatPartMessage(t *thread.Thread) ([]genai.Part, error) {
+func (g *Gemini) threadToPartContentMessage(t *thread.Thread) []*genai.Content {
 	var (
-		chatMessages []genai.Part
-		chatHistory  []*genai.Content
+		contentMessages []*genai.Content
 	)
 
 	for _, m := range t.Messages[:len(t.Messages)-1] {
 		switch m.Role {
 		case thread.RoleSystem:
-			g.genModel.SystemInstruction = &genai.Content{
+			g.generateConfig.SystemInstruction = &genai.Content{
 				Role:  "system_instructions",
-				Parts: []genai.Part{genai.Text(m.Contents[0].AsString())},
-			}
+				Parts: []*genai.Part{{Text: m.Contents[0].AsString()}}}
 			//fmt.Println("----System-----")
 			//fmt.Println(m.Contents[0].AsString()[:100])
 			//fmt.Println("----End----")
 
 		case thread.RoleUser:
 			role := threadRoleToGeminiRole[thread.RoleUser]
-			chatHistory = append(chatHistory, formChatHistory(role, m)...)
+			contentMessages = append(contentMessages, formChatHistory(role, m)...)
 
 		case thread.RoleAssistant:
 			assistantRole := threadRoleToGeminiRole[thread.RoleAssistant]
-			chatHistory = append(chatHistory, formChatHistory(assistantRole, m)...)
+			contentMessages = append(contentMessages, formChatHistory(assistantRole, m)...)
 
 		case thread.RoleTool:
 			toolRole := threadRoleToGeminiRole[thread.RoleTool]
-			chatHistory = append(chatHistory, formChatHistory(toolRole, m)...)
+			contentMessages = append(contentMessages, formChatHistory(toolRole, m)...)
 		}
 	}
 
@@ -75,43 +72,47 @@ func (g *Gemini) threadToChatPartMessage(t *thread.Thread) ([]genai.Part, error)
 		case thread.ToolResponseData:
 			var response map[string]any
 			_ = json.Unmarshal([]byte(v.Result), &response)
-			chatMessages = append(chatMessages, genai.FunctionResponse{
-				Name:     v.Name,
-				Response: response,
-			})
+			contentMessages = append(contentMessages, &genai.Content{
+				Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{
+					Name:     v.Name,
+					Response: response}},
+				}})
 		default:
-			chatMessages = append(chatMessages, genai.Text(content.AsString()))
+			contentMessages = append(contentMessages, genai.Text(content.AsString())...)
 		}
 	}
 
-	//fmt.Println("----History----")
-	//for _, history := range chatHistory {
-	//	fmt.Println(history.Role, history.Parts)
-	//}
-	//fmt.Println("----Messages----")
-	//fmt.Println(chatMessages)
-	//fmt.Println("----End----")
-	g.session = g.genModel.StartChat()
-	g.session.History = chatHistory
-	return chatMessages, nil
+	/*	fmt.Println("----History----")
+		for _, history := range contentMessages {
+			fmt.Println(history.Role, history.Parts)
+		}
+		fmt.Println("----Messages----")
+		fmt.Println(chatMessages)
+		fmt.Println("----End----")
+		g.session = g.genModel.StartChat()
+		g.session.History = contentMessages
+	*/
+
+	return contentMessages
 }
 
-func PartsTostring(parts []genai.Part) string {
+func PartsTostring(parts []*genai.Part) string {
 	var msg strings.Builder
 	size := len(parts) - 1
 	for i := 0; i < len(parts); i++ {
-		switch parts[i].(type) {
-		case genai.Text:
-			msg.WriteString(fmt.Sprintf("%v", parts[i]))
+		if parts[i].Text != "" {
+			msg.WriteString(fmt.Sprintf("%s", parts[i].Text))
 			if i != size {
 				msg.WriteString(" ")
 			}
-		case genai.FunctionCall:
-			fp := parts[i].(genai.FunctionCall)
+		}
+		if parts[i].FunctionCall != nil {
+			fp := parts[i].FunctionCall
 			msg.WriteString(fmt.Sprintf("FunctionCall: %+v ", fp))
+		}
 
-		case genai.FunctionResponse:
-			fp := parts[i].(genai.FunctionResponse)
+		if parts[i].FunctionResponse != nil {
+			fp := parts[i].FunctionResponse
 			msg.WriteString(fmt.Sprintf("FunctionResponse: %+v ", fp))
 		}
 	}
@@ -160,20 +161,20 @@ func formChatHistory(role string, m *thread.Message) (ch []*genai.Content) {
 			for _, tcd := range v {
 				var args map[string]any
 				_ = json.Unmarshal([]byte(tcd.Arguments), &args)
-				chatContent.Parts = append(chatContent.Parts, genai.FunctionCall{
+				chatContent.Parts = append(chatContent.Parts, &genai.Part{FunctionCall: &genai.FunctionCall{
 					Name: tcd.Name,
 					Args: args,
-				})
+				}})
 			}
 		case thread.ToolResponseData:
 			var toolResponse map[string]any
 			_ = json.Unmarshal([]byte(v.Result), &toolResponse)
-			chatContent.Parts = append(chatContent.Parts, genai.FunctionResponse{
+			chatContent.Parts = append(chatContent.Parts, &genai.Part{FunctionResponse: &genai.FunctionResponse{
 				Name:     v.Name,
 				Response: toolResponse,
-			})
+			}})
 		default:
-			chatContent.Parts = append(chatContent.Parts, genai.Text(content.AsString()))
+			chatContent.Parts = append(chatContent.Parts, &genai.Part{Text: content.AsString()})
 		}
 
 	}
