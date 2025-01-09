@@ -2,6 +2,7 @@ package thread
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"text/template"
 
@@ -17,6 +18,7 @@ type ContentType string
 const (
 	ContentTypeText         ContentType = "text"
 	ContentTypeImage        ContentType = "image"
+	ContentTypeAudio        ContentType = "audio"
 	ContentTypeToolCall     ContentType = "tool_call"
 	ContentTypeToolResponse ContentType = "tool_response"
 )
@@ -25,6 +27,7 @@ type Content struct {
 	Type      ContentType
 	Data      any
 	Processed bool
+	MIMEType  string
 }
 
 type Role string
@@ -57,6 +60,14 @@ func NewTextContent(text string) *Content {
 	return &Content{
 		Type: ContentTypeText,
 		Data: text,
+	}
+}
+
+func NewAudioContent(audio []byte, MIMEType string) *Content {
+	return &Content{
+		Type:     ContentTypeAudio,
+		Data:     audio,
+		MIMEType: MIMEType,
 	}
 }
 
@@ -151,6 +162,8 @@ func (t *Thread) String() string {
 				str += "\tTool ID: " + content.Data.(ToolResponseData).ID + "\n"
 				str += "\tTool Name: " + content.Data.(ToolResponseData).Name + "\n"
 				str += "\tTool Result: " + content.Data.(ToolResponseData).Result + "\n"
+			case ContentTypeAudio:
+				str += fmt.Sprintf("\tAudio Bytes: %d | MIMEType: %s  \n", len(content.Data.([]byte)), content.MIMEType)
 			}
 		}
 	}

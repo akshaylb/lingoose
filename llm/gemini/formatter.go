@@ -46,9 +46,19 @@ func (g *Gemini) threadToPartContentMessage(t *thread.Thread) []*genai.Content {
 	for _, m := range t.Messages[:len(t.Messages)-1] {
 		switch m.Role {
 		case thread.RoleSystem:
-			g.generateConfig.SystemInstruction = &genai.Content{
-				Role:  "system_instructions",
-				Parts: []*genai.Part{{Text: m.Contents[0].AsString()}}}
+			if m.Contents[0].Type == thread.ContentTypeAudio {
+				g.generateConfig.SystemInstruction = &genai.Content{
+					Role: "system_instructions",
+					Parts: []*genai.Part{{InlineData: &genai.Blob{
+						Data:     (m.Contents[0].Data).([]byte),
+						MIMEType: m.Contents[0].MIMEType},
+					}}}
+			} else {
+				g.generateConfig.SystemInstruction = &genai.Content{
+					Role:  "system_instructions",
+					Parts: []*genai.Part{{Text: m.Contents[0].AsString()}}}
+			}
+
 			//fmt.Println("----System-----")
 			//fmt.Println(m.Contents[0].AsString()[:100])
 			//fmt.Println("----End----")
@@ -78,7 +88,20 @@ func (g *Gemini) threadToPartContentMessage(t *thread.Thread) []*genai.Content {
 					Response: response}},
 				}})
 		default:
-			contentMessages = append(contentMessages, genai.Text(content.AsString())...)
+			if content.Type == thread.ContentTypeAudio {
+				contentMessages = append(contentMessages, &genai.Content{
+					Parts: []*genai.Part{
+						{
+							InlineData: &genai.Blob{
+								Data:     (content.Data).([]byte),
+								MIMEType: content.MIMEType,
+							},
+						},
+					},
+				})
+			} else {
+				contentMessages = append(contentMessages, genai.Text(content.AsString())...)
+			}
 		}
 	}
 
@@ -174,9 +197,15 @@ func formChatHistory(role string, m *thread.Message) (ch []*genai.Content) {
 				Response: toolResponse,
 			}})
 		default:
-			chatContent.Parts = append(chatContent.Parts, &genai.Part{Text: content.AsString()})
+			if content.Type == thread.ContentTypeAudio {
+				chatContent.Parts = append(chatContent.Parts, &genai.Part{InlineData: &genai.Blob{
+					Data:     (content.Data).([]byte),
+					MIMEType: content.MIMEType,
+				}})
+			} else {
+				chatContent.Parts = append(chatContent.Parts, &genai.Part{Text: content.AsString()})
+			}
 		}
-
 	}
 	ch = append(ch, chatContent)
 	return

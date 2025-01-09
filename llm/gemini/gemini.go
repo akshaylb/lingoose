@@ -23,19 +23,26 @@ var threadRoleToGeminiRole = map[thread.Role]string{
 	thread.RoleTool:      "tool",
 }
 
+type AudioOutput struct {
+	Data     []byte
+	MIMEType string
+}
+
 type Gemini struct {
-	ctx              context.Context
-	client           *genai.Client
-	generateConfig   *genai.GenerateContentConfig
-	model            Model
-	temperature      float32
-	maxTokens        int
-	stop             []string
-	functions        map[string]Function
-	streamCallbackFn StreamCallback
-	tools            []*genai.Tool
-	cache            *cache.Cache
-	TotalTokens      int64
+	ctx                  context.Context
+	client               *genai.Client
+	generateConfig       *genai.GenerateContentConfig
+	model                Model
+	temperature          float32
+	maxTokens            int
+	stop                 []string
+	functions            map[string]Function
+	streamCallbackFn     StreamCallback
+	BlobStreamCallBackfn BlobStreamCallback
+	tools                []*genai.Tool
+	cache                *cache.Cache
+	TotalTokens          int64
+	AudioEnabled         bool
 }
 
 func DefaultSafetySettings() []*genai.SafetySetting {
@@ -60,6 +67,15 @@ func (g *Gemini) WithStream(enable bool, callbackFn StreamCallback) *Gemini {
 	return g
 }
 
+func (g *Gemini) WithBlobStream(enable bool, callbackFn BlobStreamCallback) *Gemini {
+	if !enable {
+		g.BlobStreamCallBackfn = nil
+	} else {
+		g.BlobStreamCallBackfn = callbackFn
+	}
+	return g
+}
+
 func (g *Gemini) ClearTools() {
 	g.generateConfig.Tools = []*genai.Tool{}
 }
@@ -79,6 +95,11 @@ func (g *Gemini) WithToolChoice(toolName string) *Gemini {
 
 func (g *Gemini) WithCache(cache *cache.Cache) *Gemini {
 	g.cache = cache
+	return g
+}
+
+func (g *Gemini) WithAudioSupport() *Gemini {
+	g.AudioEnabled = true
 	return g
 }
 
@@ -107,15 +128,15 @@ func New(ctx context.Context, opts GenerateOpts) *Gemini {
 	}
 
 	gemini.generateConfig = opts.Config
-	if opts.Config.Temperature == nil {
-		opts.Config.Temperature = genai.Ptr(0.5)
-	}
-	if opts.Config.TopK == nil {
-		opts.Config.TopK = genai.Ptr(1.0)
-	}
-	if opts.Config.TopP == nil {
-		opts.Config.TopP = genai.Ptr(0.5)
-	}
+	//if opts.Config.Temperature == nil {
+	//	opts.Config.Temperature = genai.Ptr(0.5)
+	//}
+	//if opts.Config.TopK == nil {
+	//	opts.Config.TopK = genai.Ptr(1.0)
+	//}
+	//if opts.Config.TopP == nil {
+	//	opts.Config.TopP = genai.Ptr(0.5)
+	//}
 
 	return gemini
 }
@@ -201,7 +222,7 @@ func (g *Gemini) Generate(ctx context.Context, t *thread.Thread) error {
 
 	if g.client != nil {
 		partContents = g.buildRequest(t)
-		if g.streamCallbackFn != nil {
+		if g.streamCallbackFn != nil || g.BlobStreamCallBackfn != nil {
 			errGen = g.stream(ctx, t, partContents)
 		} else {
 			errGen = g.generate(ctx, t, partContents)
@@ -228,7 +249,6 @@ func (g *Gemini) stream(ctx context.Context, t *thread.Thread, parts []*genai.Co
 		g.generateConfig.SystemInstruction = systemPrompt[0]
 	}
 
-	//iter := g.genModel.GenerateContentStream(ctx, parts...)
 	iterItems := g.client.Models.GenerateContentStream(ctx, g.model.String(), parts, g.GetGenerateContentConfig())
 
 	var (
@@ -236,6 +256,8 @@ func (g *Gemini) stream(ctx context.Context, t *thread.Thread, parts []*genai.Co
 		currentFuncToolCall genai.FunctionCall
 		allFuncToolCall     []genai.FunctionCall
 		content             strings.Builder
+		audioBts            []byte
+		MIMEType            string
 	)
 
 	for response, err := range iterItems {
@@ -259,6 +281,10 @@ func (g *Gemini) stream(ctx context.Context, t *thread.Thread, parts []*genai.Co
 			funCall := part.FunctionCall
 			allFuncToolCall = append(allFuncToolCall, *funCall)
 			currentFuncToolCall = *funCall
+		} else if part.InlineData != nil {
+			audioBts = append(audioBts, part.InlineData.Data...)
+			g.BlobStreamCallBackfn(part.InlineData.Data)
+			MIMEType = response.Candidates[0].Content.Parts[0].InlineData.MIMEType
 		} else {
 			content.WriteString(PartsTostring(response.Candidates[0].Content.Parts))
 			g.streamCallbackFn(PartsTostring(response.Candidates[0].Content.Parts))
@@ -266,18 +292,26 @@ func (g *Gemini) stream(ctx context.Context, t *thread.Thread, parts []*genai.Co
 	}
 
 	//when iterator ends
-	g.streamCallbackFn(EOS)
-	if content.Len() > 0 {
-		messages = append(messages, thread.NewAssistantMessage().AddContent(
-			thread.NewTextContent(strings.TrimSpace(content.String())),
-		))
+	if !g.AudioEnabled {
+		g.streamCallbackFn(EOS)
+		if content.Len() > 0 {
+			messages = append(messages, thread.NewAssistantMessage().AddContent(
+				thread.NewTextContent(strings.TrimSpace(content.String())),
+			))
+		}
+	} else {
+		g.BlobStreamCallBackfn(nil)
+		if len(audioBts) > 0 {
+			messages = append(messages, thread.NewAssistantMessage().AddContent(
+				thread.NewAudioContent(audioBts, MIMEType)),
+			)
+		}
 	}
 
 	if currentFuncToolCall.Name != "" {
 		messages = append(messages, functionToolCallsToToolCallMessage(allFuncToolCall))
 		messages = append(messages, g.callFuncTools(allFuncToolCall)...)
 	}
-
 	t.AddMessages(messages...)
 	return nil
 }
@@ -306,10 +340,18 @@ func (g *Gemini) generate(ctx context.Context, t *thread.Thread, parts []*genai.
 		messages = append(messages, functionToolCallsToToolCallMessage([]genai.FunctionCall{funCall}))
 		messages = append(messages, g.callFuncTools([]genai.FunctionCall{funCall})...)
 	} else {
-		messages = []*thread.Message{
-			thread.NewAssistantMessage().AddContent(
-				thread.NewTextContent(PartsTostring(response.Candidates[0].Content.Parts)),
-			),
+		if g.AudioEnabled {
+			if response.Candidates[0].Content.Parts[0].InlineData != nil {
+				messages = append(messages, thread.NewAssistantMessage().AddContent(
+					thread.NewAudioContent(response.Candidates[0].Content.Parts[0].InlineData.Data, response.Candidates[0].Content.Parts[0].InlineData.MIMEType)),
+				)
+			}
+		} else {
+			messages = []*thread.Message{
+				thread.NewAssistantMessage().AddContent(
+					thread.NewTextContent(PartsTostring(response.Candidates[0].Content.Parts)),
+				),
+			}
 		}
 	}
 	t.Messages = append(t.Messages, messages...)

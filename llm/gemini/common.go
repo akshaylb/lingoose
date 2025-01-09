@@ -23,3 +23,4 @@ const (
 )
 
 type StreamCallback func(string)
+type BlobStreamCallback func([]byte)
