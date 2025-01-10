@@ -127,7 +127,7 @@ func main() {
 			},
 		},
 	},
-	).WithAudioSupport().WithTools(buildFuncTool())
+	).WithAudioSupport()
 
 	err = geminiLLM.BindFunction(
 		getAnswer,
