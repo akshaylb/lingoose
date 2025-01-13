@@ -54,6 +54,7 @@ const (
 	Claude3Sonnet           Model = "claude-3-sonnet-20240229"
 	Claude3Haiku20240307    Model = "claude-3-haiku-20240307"
 	Claude3Haiku            Model = "claude-3-haiku-20240307"
+	Claude3Dot5Haiku        Model = "claude-3-5-haiku@20241022"
 	Claude3Dot5Sonnet       Model = "claude-3-5-sonnet-20240620"
 	Claude3Dot5SonnetVertex Model = "claude-3-5-sonnet@20240620"
 )
