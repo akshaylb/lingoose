@@ -111,13 +111,17 @@ type GenerateOpts struct {
 	Config   *genai.GenerateContentConfig
 }
 
-func New(ctx context.Context, opts GenerateOpts) *Gemini {
+func (g *Gemini) GetClient() *genai.Client {
+	return g.client
+}
+
+func New(ctx context.Context, opts GenerateOpts) (*Gemini, error) {
 	gemini := &Gemini{}
 	gemini.ctx = ctx
 	gemini.model = opts.Model
 	gemini.functions = make(map[string]Function)
-
-	gemini.client, _ = genai.NewClient(ctx, &genai.ClientConfig{
+	var err error
+	gemini.client, err = genai.NewClient(ctx, &genai.ClientConfig{
 		Project:     opts.Project,
 		Location:    opts.Location,
 		Backend:     genai.BackendVertexAI,
@@ -126,7 +130,9 @@ func New(ctx context.Context, opts GenerateOpts) *Gemini {
 	if opts.Config == nil {
 		opts.Config = &genai.GenerateContentConfig{}
 	}
-
+	if err != nil {
+		return nil, err
+	}
 	gemini.generateConfig = opts.Config
 	//if opts.Config.Temperature == nil {
 	//	opts.Config.Temperature = genai.Ptr(0.5)
@@ -138,7 +144,7 @@ func New(ctx context.Context, opts GenerateOpts) *Gemini {
 	//	opts.Config.TopP = genai.Ptr(0.5)
 	//}
 
-	return gemini
+	return gemini, err
 }
 
 func (g *Gemini) GetGenerateContentConfig() *genai.GenerateContentConfig {
@@ -334,23 +340,25 @@ func (g *Gemini) generate(ctx context.Context, t *thread.Thread, parts []*genai.
 	var messages []*thread.Message
 
 	//check func tool call
-	part := response.Candidates[0].Content.Parts[0]
-	if part.FunctionCall != nil {
-		funCall := *part.FunctionCall
-		messages = append(messages, functionToolCallsToToolCallMessage([]genai.FunctionCall{funCall}))
-		messages = append(messages, g.callFuncTools([]genai.FunctionCall{funCall})...)
-	} else {
-		if g.AudioEnabled {
-			if response.Candidates[0].Content.Parts[0].InlineData != nil {
-				messages = append(messages, thread.NewAssistantMessage().AddContent(
-					thread.NewAudioContent(response.Candidates[0].Content.Parts[0].InlineData.Data, response.Candidates[0].Content.Parts[0].InlineData.MIMEType)),
-				)
-			}
+	if len(response.Candidates) > 0 && response.Candidates[0].Content != nil {
+		part := response.Candidates[0].Content.Parts[0]
+		if part.FunctionCall != nil {
+			funCall := *part.FunctionCall
+			messages = append(messages, functionToolCallsToToolCallMessage([]genai.FunctionCall{funCall}))
+			messages = append(messages, g.callFuncTools([]genai.FunctionCall{funCall})...)
 		} else {
-			messages = []*thread.Message{
-				thread.NewAssistantMessage().AddContent(
-					thread.NewTextContent(PartsTostring(response.Candidates[0].Content.Parts)),
-				),
+			if g.AudioEnabled {
+				if response.Candidates[0].Content.Parts[0].InlineData != nil {
+					messages = append(messages, thread.NewAssistantMessage().AddContent(
+						thread.NewAudioContent(response.Candidates[0].Content.Parts[0].InlineData.Data, response.Candidates[0].Content.Parts[0].InlineData.MIMEType)),
+					)
+				}
+			} else {
+				messages = []*thread.Message{
+					thread.NewAssistantMessage().AddContent(
+						thread.NewTextContent(PartsTostring(response.Candidates[0].Content.Parts)),
+					),
+				}
 			}
 		}
 	}
@@ -369,7 +377,7 @@ func (g *Gemini) callFuncTools(toolCalls []genai.FunctionCall) []*thread.Message
 
 	var messages []*thread.Message
 	for _, toolCall := range toolCalls {
-		result, err := g.callTool(toolCall)
+		result, err := g.CallTool(toolCall)
 		if err != nil {
 			result = fmt.Sprintf("error: %s", err)
 		}
@@ -380,7 +388,7 @@ func (g *Gemini) callFuncTools(toolCalls []genai.FunctionCall) []*thread.Message
 	return messages
 }
 
-func (g *Gemini) callTool(fnc genai.FunctionCall) (string, error) {
+func (g *Gemini) CallTool(fnc genai.FunctionCall) (string, error) {
 	fn, ok := g.functions[fnc.Name]
 	if !ok {
 		return "", fmt.Errorf("unknown function %s", fnc.Name)

@@ -17,7 +17,7 @@ require (
 	github.com/rs/zerolog v1.33.0
 	github.com/sashabaranov/go-openai v1.36.0
 	golang.org/x/oauth2 v0.23.0
-	google.golang.org/genai v0.0.0-20250108210317-fa33d5383fd5
+	google.golang.org/genai v0.0.1
 )
 
 require (
@@ -25,6 +25,7 @@ require (
 	cloud.google.com/go/compute/metadata v0.5.2 // indirect
 	github.com/gomodule/redigo v1.8.9 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/iancoleman/orderedmap v0.0.0-20190318233801-ac98e3ecb4b0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.19 // indirect
