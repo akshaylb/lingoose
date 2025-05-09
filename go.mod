@@ -1,6 +1,7 @@
 module github.com/henomis/lingoose
 
 go 1.21.1
+toolchain go1.24.1
 
 require github.com/mitchellh/mapstructure v1.5.0
 
@@ -15,7 +16,7 @@ require (
 	github.com/henomis/restclientgo v1.2.0
 	github.com/invopop/jsonschema v0.7.0
 	github.com/sashabaranov/go-openai v1.24.0
-	golang.org/x/net v0.25.0
+	golang.org/x/net v0.38.0
 )
 
 require (
