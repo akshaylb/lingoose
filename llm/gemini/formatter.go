@@ -40,12 +40,22 @@ import (
 
 func (g *Gemini) threadToPartContentMessage(t *thread.Thread) []*genai.Content {
 	var (
-		contentMessages []*genai.Content
+		contentMessages      []*genai.Content
+		systemInstructionSet bool
 	)
 
 	for _, m := range t.Messages[:len(t.Messages)-1] {
 		switch m.Role {
 		case thread.RoleSystem:
+			// Only use the first system message as SystemInstruction.
+			// Mid-thread system messages appended via appendSystemMessage
+			// are meant as OpenAI-style context resets; Gemini only supports
+			// a single SystemInstruction so subsequent ones are ignored to
+			// prevent clobbering the base system prompt.
+			if systemInstructionSet {
+				break
+			}
+			systemInstructionSet = true
 			if m.Contents[0].Type == thread.ContentTypeAudio {
 				g.generateConfig.SystemInstruction = &genai.Content{
 					Role: "system_instructions",
