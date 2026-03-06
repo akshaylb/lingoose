@@ -47,26 +47,33 @@ func (g *Gemini) threadToPartContentMessage(t *thread.Thread) []*genai.Content {
 	for _, m := range t.Messages[:len(t.Messages)-1] {
 		switch m.Role {
 		case thread.RoleSystem:
-			// Only use the first system message as SystemInstruction.
-			// Mid-thread system messages appended via appendSystemMessage
-			// are meant as OpenAI-style context resets; Gemini only supports
-			// a single SystemInstruction so subsequent ones are ignored to
-			// prevent clobbering the base system prompt.
-			if systemInstructionSet {
-				break
-			}
-			systemInstructionSet = true
-			if m.Contents[0].Type == thread.ContentTypeAudio {
-				g.generateConfig.SystemInstruction = &genai.Content{
-					Role: "system_instructions",
-					Parts: []*genai.Part{{InlineData: &genai.Blob{
-						Data:     (m.Contents[0].Data).([]byte),
-						MIMEType: m.Contents[0].MIMEType},
-					}}}
-			} else {
-				g.generateConfig.SystemInstruction = &genai.Content{
-					Role:  "system_instructions",
-					Parts: []*genai.Part{{Text: m.Contents[0].AsString()}}}
+			// Gemini supports only a single SystemInstruction field.
+			// The first system message sets it; subsequent ones (e.g. store
+			// details or context appended mid-thread) are concatenated into
+			// the same SystemInstruction rather than overwriting it, so the
+			// base system prompt is always preserved at the front.
+			if !systemInstructionSet {
+				systemInstructionSet = true
+				if m.Contents[0].Type == thread.ContentTypeAudio {
+					g.generateConfig.SystemInstruction = &genai.Content{
+						Role: "system_instructions",
+						Parts: []*genai.Part{{InlineData: &genai.Blob{
+							Data:     (m.Contents[0].Data).([]byte),
+							MIMEType: m.Contents[0].MIMEType},
+						}}}
+				} else {
+					g.generateConfig.SystemInstruction = &genai.Content{
+						Role:  "system_instructions",
+						Parts: []*genai.Part{{Text: m.Contents[0].AsString()}}}
+				}
+			} else if g.generateConfig.SystemInstruction != nil {
+				// Append subsequent system messages as additional text parts
+				// so context like store details reaches the model without
+				// clobbering the base prompt the model was fine-tuned on.
+				g.generateConfig.SystemInstruction.Parts = append(
+					g.generateConfig.SystemInstruction.Parts,
+					&genai.Part{Text: "\n\n" + m.Contents[0].AsString()},
+				)
 			}
 
 			//fmt.Println("----System-----")
