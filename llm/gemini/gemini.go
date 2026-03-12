@@ -249,12 +249,8 @@ func (g *Gemini) Generate(ctx context.Context, t *thread.Thread) error {
 }
 
 func (g *Gemini) stream(ctx context.Context, t *thread.Thread, parts []*genai.Content) error {
-	if len(parts) > 1 {
-		systemPrompt := parts[:1]
-		parts = parts[1:]
-		g.generateConfig.SystemInstruction = systemPrompt[0]
-	}
-
+	// SystemInstruction is already set correctly by threadToPartContentMessage;
+	// do not extract it from parts here.
 	iterItems := g.client.Models.GenerateContentStream(ctx, g.model.String(), parts, g.GetGenerateContentConfig())
 
 	var (
