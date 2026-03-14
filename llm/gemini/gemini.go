@@ -52,6 +52,12 @@ func DefaultSafetySettings() []*genai.SafetySetting {
 	}}
 }
 
+// WithModel sets the model to use for the Gemini instance.
+func (g *Gemini) WithModel(model Model) *Gemini {
+	g.model = model
+	return g
+}
+
 // WithTemperature sets the temperature to use for the Gemini instance.
 func (g *Gemini) WithTemperature(temperature float32) *Gemini {
 	g.temperature = temperature
@@ -249,12 +255,6 @@ func (g *Gemini) Generate(ctx context.Context, t *thread.Thread) error {
 }
 
 func (g *Gemini) stream(ctx context.Context, t *thread.Thread, parts []*genai.Content) error {
-	if len(parts) > 1 {
-		systemPrompt := parts[:1]
-		parts = parts[1:]
-		g.generateConfig.SystemInstruction = systemPrompt[0]
-	}
-
 	iterItems := g.client.Models.GenerateContentStream(ctx, g.model.String(), parts, g.GetGenerateContentConfig())
 
 	var (

@@ -42,21 +42,28 @@ func (g *Gemini) threadToPartContentMessage(t *thread.Thread) []*genai.Content {
 	var (
 		contentMessages []*genai.Content
 	)
+	g.generateConfig.SystemInstruction = nil
 
 	for _, m := range t.Messages[:len(t.Messages)-1] {
 		switch m.Role {
 		case thread.RoleSystem:
 			if m.Contents[0].Type == thread.ContentTypeAudio {
-				g.generateConfig.SystemInstruction = &genai.Content{
-					Role: "system_instructions",
-					Parts: []*genai.Part{{InlineData: &genai.Blob{
-						Data:     (m.Contents[0].Data).([]byte),
-						MIMEType: m.Contents[0].MIMEType},
-					}}}
+				if g.generateConfig.SystemInstruction == nil {
+					g.generateConfig.SystemInstruction = &genai.Content{
+						Role: "system_instructions",
+					}
+				}
+				g.generateConfig.SystemInstruction.Parts = append(g.generateConfig.SystemInstruction.Parts, &genai.Part{InlineData: &genai.Blob{
+					Data:     (m.Contents[0].Data).([]byte),
+					MIMEType: m.Contents[0].MIMEType},
+				})
 			} else {
-				g.generateConfig.SystemInstruction = &genai.Content{
-					Role:  "system_instructions",
-					Parts: []*genai.Part{{Text: m.Contents[0].AsString()}}}
+				if g.generateConfig.SystemInstruction == nil {
+					g.generateConfig.SystemInstruction = &genai.Content{
+						Role: "system_instructions",
+					}
+				}
+				g.generateConfig.SystemInstruction.Parts = append(g.generateConfig.SystemInstruction.Parts, &genai.Part{Text: m.Contents[0].AsString()})
 			}
 
 			//fmt.Println("----System-----")
