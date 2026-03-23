@@ -278,6 +278,9 @@ func (g *Gemini) stream(ctx context.Context, t *thread.Thread, parts []*genai.Co
 		}
 
 		//check func tool call
+		if response.Candidates[0].Content == nil || len(response.Candidates[0].Content.Parts) == 0 {
+			continue
+		}
 		part := response.Candidates[0].Content.Parts[0]
 		if part.FunctionCall != nil {
 			funCall := part.FunctionCall
