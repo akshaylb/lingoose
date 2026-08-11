@@ -185,8 +185,8 @@ func (o *Legacy) BatchCompletion(ctx context.Context, prompts []string) ([]strin
 		return nil, fmt.Errorf("%w: %w", ErrOpenAICompletion, err)
 	}
 
-	if o.usageCallback != nil {
-		o.setUsageMetadata(response.Usage)
+	if o.usageCallback != nil && response.Usage != nil {
+		o.setUsageMetadata(*response.Usage)
 	}
 
 	if len(response.Choices) == 0 {
@@ -240,8 +240,8 @@ func (o *Legacy) BatchCompletionStream(ctx context.Context, callbackFn []StreamC
 			return fmt.Errorf("%w: %w", ErrOpenAICompletion, errRecv)
 		}
 
-		if o.usageCallback != nil {
-			o.setUsageMetadata(response.Usage)
+		if o.usageCallback != nil && response.Usage != nil {
+			o.setUsageMetadata(*response.Usage)
 		}
 
 		if len(response.Choices) == 0 {
