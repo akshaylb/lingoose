@@ -30,21 +30,24 @@ var threadRoleToOpenAIRole = map[thread.Role]string{
 }
 
 type OpenAI struct {
-	openAIClient     *openai.Client
-	model            Model
-	temperature      float32
-	maxTokens        int
-	stop             []string
-	topP             float32
-	usageCallback    UsageCallback
-	functions        map[string]Function
-	streamCallbackFn StreamCallback
-	responseFormat   *ResponseFormat
-	toolChoice       *string
-	cache            *cache.Cache
-	Name             string
-	store            bool
-	metadata         map[string]string
+	openAIClient      *openai.Client
+	model             Model
+	temperature       float32
+	maxTokens         int
+	stop              []string
+	topP              float32
+	usageCallback     UsageCallback
+	functions         map[string]Function
+	streamCallbackFn  StreamCallback
+	responseFormat    *ResponseFormat
+	toolChoice        *string
+	cache             *cache.Cache
+	Name              string
+	store             bool
+	metadata          map[string]string
+	reasoningEffort   string
+	verbosity         string
+	parallelToolCalls any
 }
 
 // WithModel sets the model to use for the OpenAI instance.
@@ -80,6 +83,24 @@ func (o *OpenAI) WithStop(stop []string) *OpenAI {
 // WithTopP sets the TopP to use for the OpenAI instance.
 func (o *OpenAI) WithTopP(tp float32) *OpenAI {
 	o.topP = tp
+	return o
+}
+
+// WithReasoningEffort sets the reasoning effort ("low"/"medium"/"high") for reasoning models.
+func (o *OpenAI) WithReasoningEffort(effort string) *OpenAI {
+	o.reasoningEffort = effort
+	return o
+}
+
+// WithVerbosity sets the verbosity ("low"/"medium"/"high") for GPT-5-series models.
+func (o *OpenAI) WithVerbosity(verbosity string) *OpenAI {
+	o.verbosity = verbosity
+	return o
+}
+
+// WithParallelToolCalls sets whether the model may call multiple tools in parallel.
+func (o *OpenAI) WithParallelToolCalls(enabled bool) *OpenAI {
+	o.parallelToolCalls = enabled
 	return o
 }
 
@@ -434,6 +455,9 @@ func (o *OpenAI) BuildChatCompletionRequest(t *thread.Thread) openai.ChatComplet
 		ResponseFormat:      responseFormat,
 		Store:               o.store,
 		Metadata:            o.metadata,
+		ReasoningEffort:     o.reasoningEffort,
+		Verbosity:           o.verbosity,
+		ParallelToolCalls:   o.parallelToolCalls,
 	}
 }
 
